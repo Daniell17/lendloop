@@ -1,0 +1,116 @@
+{
+  "name": "LendLoop Error Handler",
+  "nodes": [
+    {
+      "parameters": {
+        "content": "## Error handler\n\nAttach this workflow as the Error workflow on the request and reminder workflows.\n\nIt keeps only the workflow name, execution id, and a short error message. The original payload is not forwarded.\n\nFailed runs also stay visible in the n8n Executions list.",
+        "height": 220,
+        "width": 420,
+        "color": 4
+      },
+      "id": "c3000000-0000-4000-8000-000000000001",
+      "name": "Setup",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        -20,
+        -40
+      ]
+    },
+    {
+      "parameters": {},
+      "id": "c3000000-0000-4000-8000-000000000002",
+      "name": "Error trigger",
+      "type": "n8n-nodes-base.errorTrigger",
+      "typeVersion": 1,
+      "position": [
+        280,
+        220
+      ]
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "function canonicalize(value) {\n  if (value === null) return \"null\";\n  if (typeof value === \"string\" || typeof value === \"boolean\") return JSON.stringify(value);\n  if (typeof value === \"number\") {\n    if (!Number.isFinite(value)) throw new Error(\"Cannot sign a non-finite number.\");\n    return JSON.stringify(value);\n  }\n  if (Array.isArray(value)) {\n    return `[${value.map((item) => canonicalize(item)).join(\",\")}]`;\n  }\n  if (typeof value === \"object\") {\n    const keys = Object.keys(value)\n      .filter((key) => value[key] !== undefined)\n      .sort();\n    return `{${keys\n      .map((key) => `${JSON.stringify(key)}:${canonicalize(value[key])}`)\n      .join(\",\")}}`;\n  }\n  throw new Error(\"Cannot sign this payload.\");\n}\n\nfunction timingSafeEqualHex(a, b) {\n  const left = String(a).toLowerCase();\n  const right = String(b).toLowerCase();\n  const length = Math.max(left.length, right.length);\n  let mismatch = left.length === right.length ? 0 : 1;\n  for (let index = 0; index < length; index += 1) {\n    mismatch |= (left.charCodeAt(index) || 0) ^ (right.charCodeAt(index) || 0);\n  }\n  return mismatch === 0;\n}\n\nfunction signBody(secret, timestamp, rawBody) {\n  const crypto = require(\"crypto\");\n  return crypto.createHmac(\"sha256\", secret).update(`${timestamp}.${rawBody}`).digest(\"hex\");\n}\n\nconst secret = $env.LENDLOOP_HMAC_SECRET;\nconst base = $env.CONVEX_SITE_URL;\nif (!secret || !base) throw new Error(\"LENDLOOP_HMAC_SECRET and CONVEX_SITE_URL are required.\");\nconst execution = $json.execution || {};\nconst workflow = $json.workflow || {};\nconst workflowName = String(workflow.name || \"unknown\").slice(0, 120);\nconst executionId = String(execution.id || \"unknown\").replace(/[^A-Za-z0-9_.:-]/g, \"\").slice(0, 80) || \"unknown\";\nconst message = String((execution.error && execution.error.message) || \"Workflow failed\").slice(0, 300);\nconst payload = {\n  idempotencyKey: \"error:\" + workflowName + \":\" + executionId,\n  message,\n  workflowName,\n};\nconst rawBody = canonicalize(payload);\nconst timestamp = Date.now().toString();\nreturn [{\n  json: {\n    rawBody,\n    timestamp,\n    signature: signBody(secret, timestamp, rawBody),\n    url: base.replace(/\\/$/, \"\") + \"/automation-errors\",\n    log: \"Failure visible for \" + workflowName + \" execution \" + executionId,\n  },\n}];"
+      },
+      "id": "c3000000-0000-4000-8000-000000000003",
+      "name": "Sign failure report",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        560,
+        220
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $json.url }}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "X-LendLoop-Timestamp",
+              "value": "={{ $json.timestamp }}"
+            },
+            {
+              "name": "X-LendLoop-Signature",
+              "value": "={{ $json.signature }}"
+            }
+          ]
+        },
+        "sendBody": true,
+        "contentType": "raw",
+        "rawContentType": "application/json",
+        "body": "={{ $json.rawBody }}",
+        "options": {}
+      },
+      "id": "c3000000-0000-4000-8000-000000000004",
+      "name": "Report failure",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        880,
+        220
+      ],
+      "retryOnFail": true,
+      "maxTries": 4,
+      "waitBetweenTries": 2000,
+      "onError": "stopWorkflow"
+    }
+  ],
+  "connections": {
+    "Error trigger": {
+      "main": [
+        [
+          {
+            "node": "Sign failure report",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Sign failure report": {
+      "main": [
+        [
+          {
+            "node": "Report failure",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "pinData": {},
+  "active": false,
+  "settings": {
+    "executionOrder": "v1",
+    "timezone": "UTC"
+  },
+  "meta": {
+    "templateCredsSetupCompleted": true
+  },
+  "tags": []
+}

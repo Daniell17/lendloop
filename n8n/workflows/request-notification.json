@@ -1,0 +1,199 @@
+{
+  "name": "LendLoop Request Notification",
+  "nodes": [
+    {
+      "parameters": {
+        "content": "## LendLoop request notification\n\nConvex signs each loan event and POSTs it here.\n\nAfter import: workflow menu → Settings → Error workflow → **LendLoop Error Handler**. Then publish this workflow.\n\nThe HMAC secret is read from `$env.LENDLOOP_HMAC_SECRET`. Do not paste it into this workflow.",
+        "height": 220,
+        "width": 420,
+        "color": 4
+      },
+      "id": "a1000000-0000-4000-8000-000000000001",
+      "name": "Setup",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        -20,
+        -40
+      ]
+    },
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "lendloop-request",
+        "responseMode": "responseNode",
+        "options": {
+          "rawBody": true
+        }
+      },
+      "id": "a1000000-0000-4000-8000-000000000002",
+      "name": "Request webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        280,
+        220
+      ],
+      "webhookId": "a1000000-0000-4000-8000-000000000003"
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "function canonicalize(value) {\n  if (value === null) return \"null\";\n  if (typeof value === \"string\" || typeof value === \"boolean\") return JSON.stringify(value);\n  if (typeof value === \"number\") {\n    if (!Number.isFinite(value)) throw new Error(\"Cannot sign a non-finite number.\");\n    return JSON.stringify(value);\n  }\n  if (Array.isArray(value)) {\n    return `[${value.map((item) => canonicalize(item)).join(\",\")}]`;\n  }\n  if (typeof value === \"object\") {\n    const keys = Object.keys(value)\n      .filter((key) => value[key] !== undefined)\n      .sort();\n    return `{${keys\n      .map((key) => `${JSON.stringify(key)}:${canonicalize(value[key])}`)\n      .join(\",\")}}`;\n  }\n  throw new Error(\"Cannot sign this payload.\");\n}\n\nfunction timingSafeEqualHex(a, b) {\n  const left = String(a).toLowerCase();\n  const right = String(b).toLowerCase();\n  const length = Math.max(left.length, right.length);\n  let mismatch = left.length === right.length ? 0 : 1;\n  for (let index = 0; index < length; index += 1) {\n    mismatch |= (left.charCodeAt(index) || 0) ^ (right.charCodeAt(index) || 0);\n  }\n  return mismatch === 0;\n}\n\nfunction signBody(secret, timestamp, rawBody) {\n  const crypto = require(\"crypto\");\n  return crypto.createHmac(\"sha256\", secret).update(`${timestamp}.${rawBody}`).digest(\"hex\");\n}\n\nconst secret = $env.LENDLOOP_HMAC_SECRET;\nif (!secret) throw new Error(\"LENDLOOP_HMAC_SECRET is not set.\");\nlet rawBody = \"\";\ntry {\n  rawBody = (await this.helpers.getBinaryDataBuffer(0, \"data\")).toString(\"utf8\");\n} catch (error) {\n  throw new Error(\"Raw webhook body is missing. Enable Raw Body on the Webhook node.\");\n}\nconst headers = $input.first().json.headers || {};\nconst timestamp = String(headers[\"x-lendloop-timestamp\"] || \"\");\nconst signature = String(headers[\"x-lendloop-signature\"] || \"\").trim().toLowerCase();\nlet valid = false;\nlet reason = \"missing_timestamp\";\nif (!/^\\d{10,16}$/.test(timestamp)) reason = \"missing_timestamp\";\nelse if (!/^[0-9a-f]{64}$/.test(signature)) reason = \"missing_signature\";\nelse if (!timingSafeEqualHex(signBody(secret, timestamp, rawBody), signature)) reason = \"invalid_signature\";\nelse if (Math.abs(Date.now() - Number(timestamp)) > 5 * 60 * 1000) reason = \"stale_timestamp\";\nelse {\n  valid = true;\n  reason = \"ok\";\n}\nlet body = {};\ntry {\n  body = JSON.parse(rawBody);\n} catch (error) {\n  body = {};\n}\nreturn [{ json: { valid, reason, body } }];"
+      },
+      "id": "a1000000-0000-4000-8000-000000000004",
+      "name": "Verify signature",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        540,
+        220
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "signature-valid",
+              "leftValue": "={{ $json.valid }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "a1000000-0000-4000-8000-000000000005",
+      "name": "Signature valid?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        820,
+        220
+      ]
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "function canonicalize(value) {\n  if (value === null) return \"null\";\n  if (typeof value === \"string\" || typeof value === \"boolean\") return JSON.stringify(value);\n  if (typeof value === \"number\") {\n    if (!Number.isFinite(value)) throw new Error(\"Cannot sign a non-finite number.\");\n    return JSON.stringify(value);\n  }\n  if (Array.isArray(value)) {\n    return `[${value.map((item) => canonicalize(item)).join(\",\")}]`;\n  }\n  if (typeof value === \"object\") {\n    const keys = Object.keys(value)\n      .filter((key) => value[key] !== undefined)\n      .sort();\n    return `{${keys\n      .map((key) => `${JSON.stringify(key)}:${canonicalize(value[key])}`)\n      .join(\",\")}}`;\n  }\n  throw new Error(\"Cannot sign this payload.\");\n}\n\nfunction timingSafeEqualHex(a, b) {\n  const left = String(a).toLowerCase();\n  const right = String(b).toLowerCase();\n  const length = Math.max(left.length, right.length);\n  let mismatch = left.length === right.length ? 0 : 1;\n  for (let index = 0; index < length; index += 1) {\n    mismatch |= (left.charCodeAt(index) || 0) ^ (right.charCodeAt(index) || 0);\n  }\n  return mismatch === 0;\n}\n\nfunction signBody(secret, timestamp, rawBody) {\n  const crypto = require(\"crypto\");\n  return crypto.createHmac(\"sha256\", secret).update(`${timestamp}.${rawBody}`).digest(\"hex\");\n}\n\nconst staticData = $getWorkflowStaticData(\"global\");\nstaticData.seen = staticData.seen || {};\nconst body = $json.body || {};\nconst notice = {\n  event: body.event,\n  idempotencyKey: body.idempotencyKey,\n  loanId: body.loanId,\n  recipientUserId: body.recipientUserId,\n  status: body.status,\n  toolName: body.toolName,\n};\nconst key = String(notice.idempotencyKey || \"\");\nif (key && staticData.seen[key]) {\n  return [{ json: { duplicate: true, log: \"duplicate notification \" + key } }];\n}\nif (key) staticData.seen[key] = Date.now();\nconst cutoff = Date.now() - 7 * 24 * 60 * 60 * 1000;\nfor (const seenKey of Object.keys(staticData.seen)) {\n  if (staticData.seen[seenKey] < cutoff) delete staticData.seen[seenKey];\n}\nconst log = \"Notify \" + notice.recipientUserId + \": \" + notice.toolName + \" is \" + notice.status + \" (\" + notice.event + \")\";\nreturn [{ json: { duplicate: false, log } }];"
+      },
+      "id": "a1000000-0000-4000-8000-000000000006",
+      "name": "Log notification",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1080,
+        80
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify({ ok: true, duplicate: $json.duplicate === true }) }}",
+        "options": {
+          "responseCode": 200
+        }
+      },
+      "id": "a1000000-0000-4000-8000-000000000007",
+      "name": "Accept",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        1360,
+        80
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify({ ok: false }) }}",
+        "options": {
+          "responseCode": 401
+        }
+      },
+      "id": "a1000000-0000-4000-8000-000000000008",
+      "name": "Reject",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        1080,
+        380
+      ]
+    }
+  ],
+  "connections": {
+    "Request webhook": {
+      "main": [
+        [
+          {
+            "node": "Verify signature",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Verify signature": {
+      "main": [
+        [
+          {
+            "node": "Signature valid?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Signature valid?": {
+      "main": [
+        [
+          {
+            "node": "Log notification",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Reject",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Log notification": {
+      "main": [
+        [
+          {
+            "node": "Accept",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "pinData": {},
+  "active": false,
+  "settings": {
+    "executionOrder": "v1",
+    "timezone": "UTC"
+  },
+  "meta": {
+    "templateCredsSetupCompleted": true
+  },
+  "tags": []
+}

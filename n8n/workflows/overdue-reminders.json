@@ -1,0 +1,262 @@
+{
+  "name": "LendLoop Overdue Reminders",
+  "nodes": [
+    {
+      "parameters": {
+        "content": "## Daily overdue reminders\n\nRuns at 08:00 UTC. Fetches overdue loans from Convex, logs a minimal reminder, and writes the result back with an idempotency key.\n\nAfter import: Settings → Error workflow → **LendLoop Error Handler**. Then publish.\n\nUses `$env.LENDLOOP_HMAC_SECRET` and `$env.CONVEX_SITE_URL`.",
+        "height": 220,
+        "width": 420,
+        "color": 4
+      },
+      "id": "b2000000-0000-4000-8000-000000000001",
+      "name": "Setup",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        -20,
+        -40
+      ]
+    },
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "days",
+              "daysInterval": 1,
+              "triggerAtHour": 8,
+              "triggerAtMinute": 0
+            }
+          ]
+        }
+      },
+      "id": "b2000000-0000-4000-8000-000000000002",
+      "name": "Daily 08:00 UTC",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        280,
+        220
+      ]
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "function canonicalize(value) {\n  if (value === null) return \"null\";\n  if (typeof value === \"string\" || typeof value === \"boolean\") return JSON.stringify(value);\n  if (typeof value === \"number\") {\n    if (!Number.isFinite(value)) throw new Error(\"Cannot sign a non-finite number.\");\n    return JSON.stringify(value);\n  }\n  if (Array.isArray(value)) {\n    return `[${value.map((item) => canonicalize(item)).join(\",\")}]`;\n  }\n  if (typeof value === \"object\") {\n    const keys = Object.keys(value)\n      .filter((key) => value[key] !== undefined)\n      .sort();\n    return `{${keys\n      .map((key) => `${JSON.stringify(key)}:${canonicalize(value[key])}`)\n      .join(\",\")}}`;\n  }\n  throw new Error(\"Cannot sign this payload.\");\n}\n\nfunction timingSafeEqualHex(a, b) {\n  const left = String(a).toLowerCase();\n  const right = String(b).toLowerCase();\n  const length = Math.max(left.length, right.length);\n  let mismatch = left.length === right.length ? 0 : 1;\n  for (let index = 0; index < length; index += 1) {\n    mismatch |= (left.charCodeAt(index) || 0) ^ (right.charCodeAt(index) || 0);\n  }\n  return mismatch === 0;\n}\n\nfunction signBody(secret, timestamp, rawBody) {\n  const crypto = require(\"crypto\");\n  return crypto.createHmac(\"sha256\", secret).update(`${timestamp}.${rawBody}`).digest(\"hex\");\n}\n\nconst secret = $env.LENDLOOP_HMAC_SECRET;\nconst base = $env.CONVEX_SITE_URL;\nif (!secret || !base) throw new Error(\"LENDLOOP_HMAC_SECRET and CONVEX_SITE_URL are required.\");\nconst rawBody = canonicalize({});\nconst timestamp = Date.now().toString();\nconst signature = signBody(secret, timestamp, rawBody);\nreturn [{ json: { rawBody, timestamp, signature, url: base.replace(/\\/$/, \"\") + \"/overdue\" } }];"
+      },
+      "id": "b2000000-0000-4000-8000-000000000003",
+      "name": "Sign overdue request",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        540,
+        220
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $json.url }}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "X-LendLoop-Timestamp",
+              "value": "={{ $json.timestamp }}"
+            },
+            {
+              "name": "X-LendLoop-Signature",
+              "value": "={{ $json.signature }}"
+            }
+          ]
+        },
+        "sendBody": true,
+        "contentType": "raw",
+        "rawContentType": "application/json",
+        "body": "={{ $json.rawBody }}",
+        "options": {}
+      },
+      "id": "b2000000-0000-4000-8000-000000000004",
+      "name": "Fetch overdue loans",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        820,
+        220
+      ],
+      "retryOnFail": true,
+      "maxTries": 4,
+      "waitBetweenTries": 2000,
+      "onError": "stopWorkflow"
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "function canonicalize(value) {\n  if (value === null) return \"null\";\n  if (typeof value === \"string\" || typeof value === \"boolean\") return JSON.stringify(value);\n  if (typeof value === \"number\") {\n    if (!Number.isFinite(value)) throw new Error(\"Cannot sign a non-finite number.\");\n    return JSON.stringify(value);\n  }\n  if (Array.isArray(value)) {\n    return `[${value.map((item) => canonicalize(item)).join(\",\")}]`;\n  }\n  if (typeof value === \"object\") {\n    const keys = Object.keys(value)\n      .filter((key) => value[key] !== undefined)\n      .sort();\n    return `{${keys\n      .map((key) => `${JSON.stringify(key)}:${canonicalize(value[key])}`)\n      .join(\",\")}}`;\n  }\n  throw new Error(\"Cannot sign this payload.\");\n}\n\nfunction timingSafeEqualHex(a, b) {\n  const left = String(a).toLowerCase();\n  const right = String(b).toLowerCase();\n  const length = Math.max(left.length, right.length);\n  let mismatch = left.length === right.length ? 0 : 1;\n  for (let index = 0; index < length; index += 1) {\n    mismatch |= (left.charCodeAt(index) || 0) ^ (right.charCodeAt(index) || 0);\n  }\n  return mismatch === 0;\n}\n\nfunction signBody(secret, timestamp, rawBody) {\n  const crypto = require(\"crypto\");\n  return crypto.createHmac(\"sha256\", secret).update(`${timestamp}.${rawBody}`).digest(\"hex\");\n}\n\nconst secret = $env.LENDLOOP_HMAC_SECRET;\nif (!secret) throw new Error(\"LENDLOOP_HMAC_SECRET is not set.\");\nconst loans = Array.isArray($json.loans) ? $json.loans : [];\nif (loans.length === 0) return [{ json: { empty: true, log: \"No overdue loans.\" } }];\nconst today = new Date().toISOString().slice(0, 10);\nconst base = String($env.CONVEX_SITE_URL || \"\").replace(/\\/$/, \"\");\nreturn loans.map((loan) => {\n  const payload = {\n    daysOverdue: loan.daysOverdue,\n    idempotencyKey: \"reminder:\" + loan.loanId + \":\" + today,\n    loanId: loan.loanId,\n    outcome: \"sent\",\n  };\n  const rawBody = canonicalize(payload);\n  const timestamp = Date.now().toString();\n  return {\n    json: {\n      empty: false,\n      log: \"Notify borrower \" + loan.borrowerId + \": \" + loan.toolName + \" is \" + loan.daysOverdue + \" day(s) overdue\",\n      rawBody,\n      timestamp,\n      signature: signBody(secret, timestamp, rawBody),\n      url: base + \"/reminders\",\n    },\n  };\n});"
+      },
+      "id": "b2000000-0000-4000-8000-000000000005",
+      "name": "Prepare reminders",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1100,
+        220
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "has-loans",
+              "leftValue": "={{ $json.empty }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "false",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "b2000000-0000-4000-8000-000000000006",
+      "name": "Anything overdue?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        1380,
+        220
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $json.url }}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "X-LendLoop-Timestamp",
+              "value": "={{ $json.timestamp }}"
+            },
+            {
+              "name": "X-LendLoop-Signature",
+              "value": "={{ $json.signature }}"
+            }
+          ]
+        },
+        "sendBody": true,
+        "contentType": "raw",
+        "rawContentType": "application/json",
+        "body": "={{ $json.rawBody }}",
+        "options": {}
+      },
+      "id": "b2000000-0000-4000-8000-000000000007",
+      "name": "Write reminder",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1640,
+        80
+      ],
+      "retryOnFail": true,
+      "maxTries": 4,
+      "waitBetweenTries": 2000,
+      "onError": "stopWorkflow"
+    },
+    {
+      "parameters": {},
+      "id": "b2000000-0000-4000-8000-000000000008",
+      "name": "Nothing overdue",
+      "type": "n8n-nodes-base.noOp",
+      "typeVersion": 1,
+      "position": [
+        1640,
+        380
+      ]
+    }
+  ],
+  "connections": {
+    "Daily 08:00 UTC": {
+      "main": [
+        [
+          {
+            "node": "Sign overdue request",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Sign overdue request": {
+      "main": [
+        [
+          {
+            "node": "Fetch overdue loans",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Fetch overdue loans": {
+      "main": [
+        [
+          {
+            "node": "Prepare reminders",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare reminders": {
+      "main": [
+        [
+          {
+            "node": "Anything overdue?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Anything overdue?": {
+      "main": [
+        [
+          {
+            "node": "Write reminder",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Nothing overdue",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "pinData": {},
+  "active": false,
+  "settings": {
+    "executionOrder": "v1",
+    "timezone": "UTC"
+  },
+  "meta": {
+    "templateCredsSetupCompleted": true
+  },
+  "tags": []
+}
